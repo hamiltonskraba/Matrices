@@ -1,0 +1,337 @@
+#!/bin/bash
+
+#debug
+#echo "all arguments: $@"
+
+dims(){
+	#verify file source
+	readfile="readfile$$.temp"
+	
+	#if reading form stdin, push to a file
+	if [ "$#" = "0" ]
+	then
+	cat > "$readfile"
+	#else use the argument input
+	elif [ "$#" = "1" ]
+	then
+	readfile=$1
+	#else too many arguments - redirect to stderr
+	elif [ "$#" -ge "2" ]
+	then
+	echo "Error: too many arguments" >&2 	
+	exit 1
+	fi
+
+	#if file is not readable then redirect to stderr
+	if [ ! -f $readfile ]
+	then	
+	echo "Error: unreadable file" >&2
+	exit 1
+	fi
+
+	#create a blank temp file
+	> dims$$.temp
+
+	rowCount=0
+	colCount=0
+
+	#count number of columns
+	read wholeline < $readfile
+	for i in $wholeline
+	do
+	((colCount=$colCount+1))
+	done
+
+	#count number of rows
+	while read wholeline
+	do
+	((rowCount=$rowCount+1))
+	done < $readfile
+
+	#print counts to terminal
+	echo "$rowCount $colCount"
+
+	#store data in temp file for later use
+	echo $rowCount > dims$$.temp
+	echo $colCount >> dims$$.temp
+}
+
+transpose(){
+	#debug statements
+	#echo "arguments in function: $@"
+	#echo "arguments in function: $#"
+
+	#verify file source
+	readfile="readfile$$.temp"
+	
+	#if reading form stdin, push to a file
+	if [ "$#" = "0" ]
+	then
+	cat > "$readfile"
+	#else use the argument input
+	elif [ "$#" = "1" ]
+	then
+	readfile=$1
+	#else too many arguments - redirect to stderr
+	elif [ "$#" -ge "2" ]
+	then
+	echo "Error: too many arguments" 1>&2 	
+	exit 1
+	fi
+
+	#if file is not readable then redirect to stderr
+	if [ ! -r $readfile ]
+	then	
+	echo "Error: unreadable file" 1>&2
+	exit 1
+	fi
+
+	#create clear temporary file
+	> transpose$$.temp
+
+	#get matrix dimensions and push output to null
+	dims $readfile &> /dev/null 
+
+	#get number of columns
+	colCount="$(tail -n 1 dims$$.temp)"
+
+	#for each column of numbers
+	for ((i=1; i<=$colCount; i++))
+	do
+		#cut first column and append serially (horizontally)
+		cut -f$i $readfile | paste -s >> transpose$$.temp
+	done
+	
+	#send transposed matrix to stdout
+	cat transpose$$.temp
+}
+
+mean() {
+	#verify file source
+	readfile="readfile$$.temp"
+	
+	#if reading form stdin, push to a file
+	if [ "$#" = "0" ]
+	then
+	cat > "$readfile"
+	#else use the argument input
+	elif [ "$#" = "1" ]
+	then
+	readfile=$1
+	#else too many arguments - redirect to stderr
+	elif [ "$#" -ge "2" ]
+	then
+	echo "Error: too many arguments" >&2 	
+	exit 1
+	fi
+
+	#if file is not readable then redirect to stderr
+	if [ ! -f $readfile ]
+	then	
+	echo "Error: unreadable file" >&2
+	exit 1
+	fi
+
+	#make temp file
+	> avg$$.temp
+
+	#flip matrix to facilitate horizontal reading
+	transpose $readfile &> /dev/null
+	
+	#read in the row 
+	while read row
+	do
+		count=0
+		sum=0
+		avg=0
+	#debug echo "reading $row"
+		for num in $row
+		do
+		#debug echo "num: $num"
+		((sum=$sum+num))
+		((count=$count+1))
+		#debug echo "sum: $sum"
+		#debug echo "count: $count"
+		done	
+	#calculate average using rounding equation supplied by prof
+	avg=$(((sum + (count/2)*( (sum>0)*2-1 )) / count))
+	#debug echo "average: $avg"
+
+	#append average and tab into a new single column file
+	echo -e "$avg\t" >> avg$$.temp
+
+	done < transpose$$.temp
+
+	#flip column to a single row, remove trailing tab, and output to stdout
+	transpose avg$$.temp
+
+}
+
+add () {
+	#verify inumber of arguments
+	if [ "$#" -ne "2" ]
+	then
+	echo "Error: incorrect number of arguments specified" >&2
+	exit 1
+	fi
+
+	#read and save dimensions of first matrix
+	dims $1 &> /dev/null
+
+	rowA="$(head -n 1 dims$$.temp)"
+	colA="$(tail -n 1 dims$$.temp)"
+
+	#debug echo "matrix 1 rows: $rowA cols: $colA"	
+
+	#debug read and save dimensions of second matrix
+	dims $2 &> /dev/null
+
+	rowB="$(head -n 1 dims$$.temp)"
+	colB="$(tail -n 1 dims$$.temp)"
+
+	#debug echo "matrix 2 rows: $rowB cols: $colB"	
+
+	#verify that matrices have the same dimensions
+	if [ $rowA -ne $rowB ]
+	then
+	echo "Error: matrices have incompatible number of rows" >&2
+	exit 1
+	fi
+
+	if [ $colA -ne $colB ]
+	then
+	echo "Error: matrices have incompatible number of columns" >&2
+	exit 1
+	fi
+
+	#push matrices to single column file
+	cat $1 | tr '\t' '\n' >> add1$$.temp
+	cat $2 | tr '\t' '\n' >> add2$$.temp
+
+	#count columns for formatting
+	colCount=0
+
+	#read every row in single column files; read matrix b from file descriptor 3 
+	while read mA && read mB <&3
+	do
+
+	#add the two entries together
+	sum=$((mA + mB))
+
+	#iterate the column count
+	((colCount=$colCount+1))
+
+	#push sum and tab onto answer file for every column
+	if [ $colCount -lt $colA ]
+	then
+	echo -e -n "$sum\t" >> sum$$.temp
+	else
+	#push just the sum for the final column to avoid trailing tab
+	echo -e "$sum" >> sum$$.temp
+	#reset count
+	colCount=0
+	fi
+
+	done < add1$$.temp 3< add2$$.temp
+
+	#output answer file
+	cat sum$$.temp
+}
+
+multiply() {
+	
+	#read dimensions of first matrix
+	dims $1 &> /dev/null
+
+	rowA="$(head -n 1 dims$$.temp)"
+	colA="$(tail -n 1 dims$$.temp)"
+
+	#echo "matrix 1 rows: $rowA cols: $colA"	
+
+	#read dimensions of second matrix
+	dims $2 &> /dev/null
+
+	rowB="$(head -n 1 dims$$.temp)"
+	colB="$(tail -n 1 dims$$.temp)"
+
+	#echo "matrix 2 rows: $rowB cols: $colB"	
+
+	#check that matrix a has the same number of rows that matrix b has columns
+	if [ "$colA" -ne "$rowB" ]
+	then
+	echo "Error: matrices incompatible for multiplication" 1>&2
+	exit 1
+	fi
+
+	ansRow=1
+	ansCol=1
+
+	#for each row in mA
+	while read row
+	do
+	
+	#read row into a single column file	
+	echo "$row" | tr '\t' '\n' >> row$ansRow$$.temp
+
+		#read each column into a file
+		while [ $ansCol -le $colB ]
+		do
+		cut -f$ansCol $2 >> col$ansCol$$.temp
+			
+			#read in current row and current col
+			while read mA && read mB <&3
+			do
+			#multiply
+			product=$((mA * mB))
+			#push to single column file
+			echo "$product" >> prod$$.temp
+		
+				#sum contents for matrix multiplication
+				sum=0	
+				while read num
+				do
+				sum=$((sum + num))
+				done < prod$$.temp
+						
+			done < row$ansRow$$.temp 3< col$ansCol$$.temp 
+	
+		#push answer and tab to final file
+		if [ "$ansCol" -lt "$colB" ]
+		then
+		echo -e -n "$sum\t" >> multiplyanswer$$.temp
+		else
+		#just push the sum if final column to avoid trailing tab
+		echo "$sum" >> multiplyanswer$$.temp
+		fi
+
+		#clear product
+		rm -f prod$$.temp
+
+		#iterate column
+		((ansCol=$ansCol+1))
+		done
+	#iterate row count
+	((ansRow=$ansRow+1))
+	#reset column count for next pass
+	ansCol=1
+	done < $1
+	
+	#output final answer
+	cat  multiplyanswer$$.temp
+	
+	#remove temporary calculation files
+	rm -f *.temp
+ 
+}
+
+#call matrix script with function and arguments
+$1 "${@:2}"
+
+#remove any trailing temporary files
+rm -f readfile$$.temp
+rm -f dims$$.temp
+rm -f transpose$$.temp
+rm -f avg$$.temp
+rm -f add1$$.temp
+rm -f add2$$.temp
+rm -f sum$$.temp
